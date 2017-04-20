@@ -10,7 +10,7 @@ import networkx as nx
 
 # In[2]:
 
-processresults_ladies = False
+processresults_ladies = True    
 processresults_mixed = True
 
 verbose = True
@@ -201,8 +201,9 @@ for teamA in teams_graph.nodes():
                 now = pd.tslib.Timestamp.now()
                 request_first_made = mixed_requests.loc[i,'Timestamp']
                 diff = request_first_made - now
-                # Add the difference*0.01 to the weight
+                # Add the difference/70.0 to the weight
                 # This will help priotitise old requests
+                # Need to use 70.0 to ensure float division
                 w += abs(diff.days)/70.0
                 
             # Decrease the weight if the game has occurred
@@ -291,8 +292,9 @@ if roundno%2 != 0:
                     now = pd.tslib.Timestamp.now()
                     request_first_made = ladies_requests.loc[i,'Timestamp']
                     diff = request_first_made - now
-                    # Add the difference*0.01 to the weight
+                    # Add the difference/70.0 to the weight
                     # This will help priotitise old requests
+                    # Need to use 70.0 to ensure float division
                     w += abs(diff.days)/70.0
                 
                 # Decrease the weight if the game has occurred
@@ -470,22 +472,6 @@ elos_fname = "Mixed Elos at round %i.csv" %int(roundno)
 with open(elos_fname,'w') as f:
     [f.write('{0},{1}\n'.format(key, value)) for key, value in mixed_elos.items()]
 
-
-# In[ ]:
-
-newnew = '''Northbridge Viet Hoes	Balcatta Dirty Stick Magnets
-Cruellas de Leederville	PerthHub: two girls one puck
-Ardross: Order of the Shnips	Fremantle Cappuccino Strippers
-Willa G-Bangers	Ardross: Order of the Shnips
-Chaigate Lattes	Yokine Ono
-Cruellas de Leederville	Northbridge Viet Hoes
-Chaigate Lattes	PerthHub: two girls one puck
-Yokine Ono	Willa G-Bangers
-Balcatta Dirty Stick Magnets	Fremantle Cappuccino Strippers
-'''
-
-
-# In[ ]:
 
 
 
