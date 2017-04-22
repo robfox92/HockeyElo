@@ -10,7 +10,7 @@ import networkx as nx
 
 # In[2]:
 
-processresults_ladies = True    
+processresults_ladies = True
 processresults_mixed = True
 
 verbose = True
@@ -343,7 +343,8 @@ if roundno%2 != 0:
 
     
     fname = 'Round %i Ladies Fixtures 2017a.csv' % int(roundno)
-    fixtured.to_csv(fname)
+    r_1 = fixtured.copy()
+    #fixtured.to_csv(fname)
     print "Ladies fixturing complete"
     # Need to create a new graph and fixture the second round (roundno+1) here
     #  Need to account for games in the (roundno)th round
@@ -424,18 +425,19 @@ if roundno%2 != 0:
 
 
 
-
+    r_2 = fixtured.copy()
     fname = 'Round %i Ladies Fixtures 2017a.csv' % (int(roundno) + 1)
     fixtured.to_csv(fname)
     f_1 = 'Round %i Ladies Fixtures 2017a.csv'% int(roundno)
     f_2 = 'Round %i Ladies Fixtures 2017a.csv'% (int(roundno)+1)
-    r_1 = pd.read_csv(f_1)
-    r_2 = pd.read_csv(f_2)
+    #r_1 = pd.read_csv(f_1)
+    #r_2 = pd.read_csv(f_2)
     
     # Combine the two rounds worth of results
     r_12 = r_1.append(r_2)
-    # Drop the bye games - bye should never be the Away team 
-    #but it is included for the off chance that it is
+    # Drop the bye games - bye should never be the Away team
+    #     (as their name never appears in the list of home teams)
+    # but it is included for the off chance that it is
     r_12 = r_12[r_12['Home Team'] != 'Bye']
     r_12 = r_12[r_12['Away Team'] != 'Bye'].reset_index()
     r_12 = r_12[['Home Team','Away Team','Game Code']]
