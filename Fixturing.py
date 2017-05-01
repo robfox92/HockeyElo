@@ -1,25 +1,152 @@
-
-# coding: utf-8
-
-# In[1]:
-
 import pandas as pd
 import numpy as np
 import networkx as nx
 
+def getExpectedOutcome(eloA,eloB):
+    # Standard function for finding the expected outcome in an 
+    #     Elo ranking system
+    out = 1 / (1 + 10 ** -((eloA - eloB) / 400))
+    return out
 
-# In[2]:
+def getScaledOutcome(eloA,eloB):
+    # Returns a scaled outcome for a game
+    # Bounded in [0,1]
+    # Higher means the elos are closer
+    outcome = getExpectedOutcome(eloA,eloB)
+    out = 2*(0.5-abs(outcome - 0.5))
+    return out
 
-processresults_ladies = True
-processresults_mixed = True
+def updateElos(initialElos,teamKvalues, results):
+    # For each game in results, update the initialElos
+    # Return the updated elo dictionary
+    for game in range(len(results)):
+        teamElos = initialElos.copy()
+        homeTeam = results.loc[game,'Home Team']
+        awayTeam = results.loc[game,'Away Team']
 
-verbose = True
+        homeK = teamKvalues[homeTeam]
+        awayK = teamKvalues[awayTeam]
 
+        homeScore = results.loc[game,'Home Score']
+        awayScore = results.loc[game,'Away Score']
+        totalScore = float(homeScore + awayScore)       # Cast as float to ensure float division later
+        homeScorePerc = homeScore / totalScore
+        awayScorePerc = awayScore / totalScore
 
-# In[90]:
+        homeElo = teamElos[homeTeam]
+        awayElo = teamElos[awayTeam]
 
-if verbose: print "Getting results from google sheet"
+        homeExpected = getExpectedOutcome(homeElo,awayElo)
+        awayExpected = getExpectedOutcome(awayElo,homeElo)
 
+        homeEloNew = homeElo + homeK * (homeScorePerc - homeExpected)
+        awayEloNew = awayElo + awayK * (awayScorePerc - awayExpected)
+
+        # Ensure that winning teams do not lose elo
+        if homeScore > awayScore:
+            homeEloNew = max(homeElo,homeEloNew)
+        if awayScore > homeScore:
+            awayEloNew = max(awayElo,awayEloNew)
+
+        # Update the dictionary with new elos
+        newElos = {homeTeam:homeEloNew, awayTeam:awayEloNew}
+        teamElos.update(newElos)
+
+    # Output the new elos
+    return teamElos
+
+def findBestPairings(elos,fixtured,requested,homeGames,byeTeam):
+    # Function to find the best pairings for a given list of elos and a round number
+    # Left the if True statement in because I cbf unindenting the lines
+    # Maybe I'll do it later? Probably not.
+    if True:    
+        # Create graph from elos.keys()
+        #  Each team will be a node and the game 'quality' will be the weight
+        graph = nx.Graph()
+        graph.add_nodes_from(elos.keys())
+
+        for teamA in graph.nodes():
+            for teamB in graph.nodes():
+
+                # If the teams are not the same and an edge has not been made yet for the two teams
+                if teamA != teamB and not graph.has_edge(teamA,teamB):
+                    w = 100
+                    if byeTeam is not None:
+                        if teamA == 'Bye':
+                            teamA = byeTeam
+                        if teamB == 'Bye':
+                            teamB = byeTeam
+                    
+                    
+                    # Create unique game codes
+                    code1 = teamA + " vs " + teamB
+                    code2 = teamB + " vs " + teamA
+                    
+                    
+                    # Grab the respective elos from the dict
+                    eloA = elos[teamA]
+                    eloB = elos[teamB]
+
+                    # Create an initial weight for the graph
+                    w += getScaledOutcome(eloA,eloB)
+
+                    # Increase the weight if the game has been requested
+                    if code1 in requested['Game Code'].unique() or code2 in requested['Game Code']:
+                        w += 2
+                        indexes = requested[['Game Code','Code 2']][requested[['Game Code','Code 2']]==code1].dropna(how='all').index
+                        
+                        firstRequestDate = requested.loc[indexes[0],'Timestamp']
+                        now = pd.tslib.Timestamp.now()
+                        diff = firstRequestDate - now
+
+                        # Add 1/70 to the weight for each day since the request was made
+                        # This will slightly prioritise older requests
+                        # At a rate of 0.1/week which seems fair?
+                        # Just made up the number because it sounded nice tbh
+                        w += abs(diff.days)/70.0
+
+                    # Decrease the weight if the game has been fixtured
+                    # Need to decrement as this will correctly handle things if
+                    #     teams must play each other twice in a season
+
+                    if code1 in fixtured:
+                        count = len(fixtured[fixtured == code1])
+                        w -= 10*count
+                    if code2 in fixtured:
+                        count = len(fixtured[fixtured == code2])
+                        w -= 10*count
+
+                    w = max(0,w)
+                    graph.add_edge(teamA,teamB,weight=w)
+        # Find the optimal pairing for the graph of teams
+        optimalPairing = nx.max_weight_matching(graph)
+        newFixture = pd.DataFrame(columns = ['Home Team','Away Team','Game Code'])
+        
+        # r stores the row to write to
+        # Probably a poor way to do it but it works I guess
+        r = 0
+        for teamA in optimalPairing.keys():
+            teamB = optimalPairing[teamA]
+
+            if (teamA not in newFixture['Home Team'].unique() and
+                teamB not in newFixture['Home Team'].unique() and
+                teamA not in newFixture['Away Team'].unique() and
+                teamB not in newFixture['Away Team'].unique()):
+
+                if len(homeGames[homeGames == teamA]):
+                    homeTeam = teamA
+                    awayTeam = teamB
+                else:
+                    homeTeam = teamB
+                    awayTeam = teamA
+
+                newFixture.loc[r,'Home Team'] = homeTeam
+                newFixture.loc[r,'Away Team'] = awayTeam
+                newFixture.loc[r,'Game Code'] = homeTeam + " vs " + awayTeam
+                r += 1
+    return newFixture
+
+# Get the data from the google sheet
 teams_url = 'https://docs.google.com/spreadsheets/d/1Oo7fzq3nJP1HxfxTYfSiig0t2Gjt19yA4Agd85CbtHU/export?format=xlsx&id=1Oo7fzq3nJP1HxfxTYfSiig0t2Gjt19yA4Agd85CbtHU'
 mixed_teams_2017a = pd.read_excel(teams_url,sheetname='Mens  Mixed Teams').dropna(how='all').reset_index()
 
@@ -29,13 +156,8 @@ ladies_teams_2017a = pd.read_excel(teams_url,sheetname = 'Ladies',header=None)
 ladies_teams = ladies_teams_2017a[0].values
 
 
-
-
 data_url = 'https://docs.google.com/spreadsheets/d/1OEIBqmZ3y1bCWOkZbdKsJu6ko7OYA3PvBjlQTHrN0mI/export?format=xlsx&id=1OEIBqmZ3y1bCWOkZbdKsJu6ko7OYA3PvBjlQTHrN0mI'
 
-# Grab the data, 
-#     drop rows where there is no home team
-#     sort the values by round
 mixed_results = pd.read_excel(data_url,sheetname = 'Mixed-Scores').dropna(how='all')
 mixed_results.sort_values(by='Round',inplace=True)
 ladies_results = pd.read_excel(data_url,sheetname = 'Ladies-Scores').dropna(how='all')
@@ -44,8 +166,9 @@ ladies_results.sort_values(by='Round',inplace=True)
 
 
 mixed_fixtured = pd.read_excel(data_url,sheetname = 'Mixed-Fixtured Games').dropna(how='all')
-
+mixed_fixtured_list = mixed_fixtured['Game Code'].unique()
 ladies_fixtured = pd.read_excel(data_url,sheetname = 'Ladies-Fixtured Games').dropna(how='all')
+ladies_fixtured_list = ladies_fixtured['Game Code'].unique()
 
 mixed_requests = pd.read_excel(data_url,sheetname='Mixed-Requests').dropna(how='all')
 mixed_requests = mixed_requests[mixed_requests['Game Fixtured'] == 0]
@@ -53,6 +176,7 @@ ladies_requests = pd.read_excel(data_url,sheetname='Ladies-Requests').dropna(how
 ladies_requests = ladies_requests[ladies_requests['Game Fixtured'] == 0]
 
 ladies_elos = {team:700 for team in ladies_teams}
+ladies_K = {team:75 for team in ladies_teams}
 
 mixed_elos_df = pd.read_excel(data_url,sheetname = 'Mixed-Starting Elos',index='TEAM NAME').dropna(how='all')
 mixed_elos_df.index = mixed_elos_df['TEAM NAME']
@@ -61,419 +185,112 @@ mixed_elos = {team:mixed_elos_df.loc[team,'STARTING ELO'] for team in mixed_elos
 mixed_K = {team:mixed_elos_df.loc[team,'K Value'] for team in mixed_elos_df.index}
 
 
-# In[4]:
+mixed_elos = updateElos(mixed_elos,mixed_K,mixed_results)
+ladies_elos = updateElos(ladies_elos,ladies_K,ladies_results)
 
-# Process mixed results
-if processresults_mixed:
-    if verbose:
-        print "Processing mixed results to update ratings"
-    for game in range(len(mixed_results)):
-        
-      
-        
-        # Grab data from the results sheet
-        home_team = mixed_results.loc[game,'Home Team']
-        away_team = mixed_results.loc[game,'Away Team']
-        
-        home_score = mixed_results.loc[game,'Home Score']
-        away_score = mixed_results.loc[game,'Away Score']
-        
-        # Cast as float to ensure float division later
-        total_score = float(home_score + away_score)
-        
-        home_score_perc = home_score / total_score
-        away_score_perc = away_score / total_score
-        
-        # Grab elos from the elos dict
-        home_elo = mixed_elos[home_team]
-        away_elo = mixed_elos[away_team]
-        home_K = mixed_K[home_team]
-        away_K = mixed_K[away_team]
-        
-        # Calculate expected game outcome
-        home_expected = 1 / (1 + 10 ** -((home_elo - away_elo) / 400))
-        away_expected = 1 / (1 + 10 ** ((home_elo - away_elo) / 400))
-        
-        # Calculate updated elos
-        home_elo_new = home_elo + home_K * (home_score_perc - home_expected)
-        away_elo_new = away_elo + away_K * (away_score_perc - away_expected)
-        
-        # Ensure winning teams don't lose elo
-        if home_score > away_score:
-            home_elo_new = max(home_elo_new,home_elo)
-        if away_score > home_score:
-            away_elo_new = max(away_elo_new,away_elo)   
-        
-        # Update the elos dict
-        mixed_elos.update({home_team:home_elo_new, away_team:away_elo_new})
+print "What round are you fixturing?"
+roundNumber = raw_input()
 
-
-
-
-# Process ladies result
-if processresults_ladies:
-    if verbose:
-        print "Processing ladies results to update ratings"
-    for game in range(len(ladies_results)):
-        
-        # Temp - need to get K values from somewhere
-        home_K = 50
-        away_K = 50
-        
-        # Grab data from the results sheet
-        home_team = ladies_results.loc[game,'Home Team']
-        away_team = ladies_results.loc[game,'Away Team']
-        
-        home_score = ladies_results.loc[game,'Home Score']
-        away_score = ladies_results.loc[game,'Away Score']
-        
-        # Cast as float to ensure float division later
-        total_score = float(home_score + away_score)
-        
-        home_score_perc = home_score / total_score
-        away_score_perc = away_score / total_score
-        
-        # Grab elos from the elos dict
-        home_elo = ladies_elos[home_team]
-        away_elo = ladies_elos[away_team]
-        
-        # Calculate expected game outcome
-        home_expected = 1 / (1 + 10 ** -((home_elo - away_elo) / 400))
-        away_expected = 1 / (1 + 10 ** ((home_elo - away_elo) / 400))
-        
-        # Calculate updated elos
-        home_elo_new = home_elo + home_K * (home_score_perc - home_expected)
-        away_elo_new = away_elo + away_K * (away_score_perc - away_expected)
-        
-        # Ensure winning teams don't lose elo
-        if home_score > away_score:
-            home_elo_new = max(home_elo_new,home_elo)
-        if away_score > home_score:
-            away_elo_new = max(away_elo_new,away_elo)   
-        
-        # Update the elos dict
-        ladies_elos.update({home_team:home_elo_new, away_team:away_elo_new})
-
-
-# In[5]:
-
-def getScaledOutcome(teamA, teamB,league):
-    if league == 'Mixed':
-        eloA = mixed_elos[teamA]
-        eloB = mixed_elos[teamB]
-        outcome = 1 / (1 + 10 ** -((eloA - eloB) / 400))
-        out = 1-abs(outcome - 0.5)
-    elif league == 'Ladies':
-        eloA = ladies_elos[teamA]
-        eloB = ladies_elos[teamB]
-        outcome = 1 / (1 + 10 ** -((eloA - eloB) / 400))
-        out = 1-abs(outcome - 0.5)  
-    return out
-
-
-
-if verbose:
-    print "Creating graph to fixture mixed league"
-# Fixture mixed teams
-# Create empty graph
-teams_graph = nx.Graph()
-# Add nodes from the list of teams (the teams that are in the elos dict)
-teams_graph.add_nodes_from(mixed_elos.keys())
-
-for teamA in teams_graph.nodes():
-    for teamB in teams_graph.nodes():
-        if teamA != teamB:
-            # Create the weight for the edge between teamA and teamB, a function of the expected outcome
-            # Larger is better
-            w = getScaledOutcome(teamA,teamB,'Mixed')
-            code1 = teamA + ' vs ' + teamB
-            code2 = teamB + ' vs ' + teamA
-            
-            # Increase the weight if the game has been requested
-            if code1 in mixed_requests['Game Code'].unique() or code2 in mixed_requests['Game Code'].unique():
-                w += 2
-                
-                # grab the date the request was made
-                indexes = mixed_requests[mixed_requests[['Game Code','Code 2']] == code1].dropna(how='all').index
-                i = indexes[0]
-                mixed_requests.loc[i,'Timestamp']
-                #Calculate the difference between when the request was first made and the current time
-                now = pd.tslib.Timestamp.now()
-                request_first_made = mixed_requests.loc[i,'Timestamp']
-                diff = request_first_made - now
-                # Add the difference/70.0 to the weight
-                # This will help priotitise old requests
-                # Need to use 70.0 to ensure float division
-                w += abs(diff.days)/70.0
-                
-            # Decrease the weight if the game has occurred
-            if code1 in mixed_fixtured['Game Code'].unique() or code2 in mixed_fixtured['Game Code'].unique():
-                w -= 10
-            teams_graph.add_edge(teamA,teamB,weight=w)
+if len(mixed_elos.keys()) %2 == 0:
+    mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
+        mixed_requests,mixed_fixtured['Home Team'].values,None)
+    mixed_fname = "Round %s Mixed Fixtures 2017a.csv" %roundNumber
+    mixedNewFixture.to_csv(mixed_fname)  
+elif len(mixed_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
+    mixed_elos.update({'Bye':0})
+    mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
+                                       mixed_requests,mixed_fixtured['Home Team'].values,None)
     
-if verbose:
-    print "Finding optimal pairings"
-mixed_pairs = nx.max_weight_matching(teams_graph)
-
-
-if verbose:
-    print "Determining home and away teams"
-# Determine who is playing at home
-hometeams = mixed_fixtured['Home Team'].values
-fixtured = pd.DataFrame(columns = ['Home Team','Away Team','Game Code'])
-
-r = 0
-for teamA in mixed_pairs.keys():
-    teamB = mixed_pairs[teamA]
+    nowRequests = mixed_requests.copy()
+    nowHome = np.concatenate((mixedNewFixture['Home Team'].values,mixed_fixtured['Home Team'].values))
+    nowFixtured = np.concatenate((mixedNewFixture['Game Code'].unique(),mixed_fixtured['Game Code'].unique()))
     
-    # Determine number of games played at home
-    homeA = len(hometeams[hometeams == teamA])
-    homeB = len(hometeams[hometeams == teamB])
-    
-    # Work out who's played more games
-    if homeB > homeA:
-        hometeam = teamA
-        awayteam = teamB
+    r = mixedNewFixture[mixedNewFixture == 'Bye'].dropna(how='all').index[0]
+    c = mixedNewFixture[mixedNewFixture == 'Bye'].dropna(how='all',axis=1).columns[0]
+    if c == 'Away Team':
+        c1 = 'Home Team'
     else:
-        hometeam = teamB
-        awayteam = teamA
+        c1 = 'Away Team'
     
-    # Write to df
-    # Ensuring that the game hasn't been recorded
-    if (hometeam not in fixtured['Home Team'].unique() and 
-        hometeam not in fixtured['Away Team'].unique() and
-        awayteam not in fixtured['Home Team'].unique() and 
-        awayteam not in fixtured['Away Team'].unique()):
+    byeTeam1 = mixedNewFixture.loc[r,c1]
+    
+    
+    
+    mixedNewFixture2 = findBestPairings(mixed_elos,nowFixtured,
+                                         nowRequests,nowHome,byeTeam1)
+    mixedNewFixture1 = mixedNewFixture.copy()
+    mixedNewFixture = pd.concat([mixedNewFixture1,mixedNewFixture2])
+    r = mixedNewFixture1[mixedNewFixture1=='Bye'].dropna(how='all').index[0]
+    c = mixedNewFixture1[mixedNewFixture1=='Bye'].dropna(how='all',axis=1).columns[0]
+    mixedNewFixture = mixedNewFixture.reset_index()[['Home Team','Away Team','Game Code']]
+    byeTeam2 = ''
+    for team in mixed_teams:
+        homeFixtured = len(mixedNewFixture[mixedNewFixture['Home Team'] == team].values)
+        awayFixtured = len(mixedNewFixture[mixedNewFixture['Away Team'] == team].values)
+        totalFixtured = homeFixtured + awayFixtured
         
-        fixtured.loc[r,'Home Team'] = hometeam
-        fixtured.loc[r,'Away Team'] = awayteam
-        fixtured.loc[r,'Game Code'] = hometeam + " vs " + awayteam
-        # Increment the row to write to
-        r += 1
+        if totalFixtured != 2:
+            byeTeam2 = team
+    mixedNewFixture.loc[r,c] = byeTeam2
+    gname = mixedNewFixture.loc[r,'Home Team'] + " vs " + mixedNewFixture.loc[r,'Away Team']
+    mixedNewFixture.loc[r,'Game Code'] = gname
+    # Make the filename
+    currentRd = int(roundNumber)
+    nextRd = currentRd + 1
+    rdno = '%i-%i' %(currentRd,nextRd)
+    mixed_fname = "Round %s Mixed Fixtures 2017a.csv" %rdno
+    mixed_elos.pop('Bye',None)
+    mixedNewFixture.to_csv(mixed_fname)    
+    
+ladies_elos.pop('Bye',None)
 
-
-
-
-roundno = raw_input("What round are you fixturing?\n")
-roundno = int(roundno)
-fname = 'Round %i Mixed Fixtures 2017a.csv' % roundno
-fixtured.to_csv(fname)
-print "Fixtures written to csv"
-
-
-# In[86]:
-
-if roundno%2 != 0:
-    print "Fixturing ladies league"
-    # Fixture mixed teams
-    # Create empty graph
-    ladies_graph = nx.Graph()
-    # Add nodes from the list of teams (the teams that are in the elos dict)
-    ladies_graph.add_nodes_from(ladies_elos.keys())
-
-    for teamA in ladies_graph.nodes():
-        for teamB in ladies_graph.nodes():
-            if teamA != teamB:
-                # Create the weight for the edge between teamA and teamB, a function of the expected outcome
-                # Larger is better
-                w = getScaledOutcome(teamA,teamB,'Ladies')
-                code1 = teamA + ' vs ' + teamB
-                code2 = teamB + ' vs ' + teamA
-                
-                # Increase the weight if the game has been requested
-                if code1 in ladies_requests['Game Code'].unique() or code2 in ladies_requests['Game Code'].unique():
-                    w += 2
-                    
-                    # grab the date the request was made
-                    indexes = ladies_requests[ladies_requests[['Game Code','Code 2']] == code1].dropna(how='all').index
-                    i = indexes[0]
-                    ladies_requests.loc[i,'Timestamp']
-                    #Calculate the difference between when the request was first made and the current time
-                    now = pd.tslib.Timestamp.now()
-                    request_first_made = ladies_requests.loc[i,'Timestamp']
-                    diff = request_first_made - now
-                    # Add the difference/70.0 to the weight
-                    # This will help priotitise old requests
-                    # Need to use 70.0 to ensure float division
-                    w += abs(diff.days)/70.0
-                
-                # Decrease the weight if the game has occurred
-                if code1 in ladies_fixtured['Game Code'].unique() or code2 in ladies_fixtured['Game Code'].unique():
-                    w -= 10
-                ladies_graph.add_edge(teamA,teamB,weight=w)
-                
-    ladies_pairs = nx.max_weight_matching(ladies_graph)
-    ladies_1_bye = ladies_pairs['Bye']
-
-
-    # Determine who is playing at home
-    hometeams = ladies_fixtured['Home Team'].values
-    fixtured = pd.DataFrame(columns = ['Home Team','Away Team','Game Code'])
-
-    r = 0
-    for teamA in ladies_pairs.keys():
-        teamB = ladies_pairs[teamA]
+if len(ladies_elos.keys()) %2 == 0:
+    ladiesNewFixture = findBestPairings(ladies_elos,ladies_fixtured_list,
+        ladies_requests,ladies_fixtured['Home Team'].values,None)
+    ladies_fname = "Round %s Ladies Fixtures 2017a.csv" %roundNumber
+    ladiesNewFixture.to_csv(ladies_fname)
+elif len(ladies_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
+    ladies_elos.update({'Bye':0})
+    ladiesNewFixture = findBestPairings(ladies_elos,ladies_fixtured_list,
+                                       ladies_requests,ladies_fixtured['Home Team'].values,None)
+    
+    nowRequests = ladies_requests.copy()
+    nowHome = np.concatenate((ladiesNewFixture['Home Team'].values,ladies_fixtured['Home Team'].values))
+    nowFixtured = np.concatenate((ladiesNewFixture['Game Code'].unique(),ladies_fixtured['Game Code'].unique()))
+    
+    r = ladiesNewFixture[ladiesNewFixture == 'Bye'].dropna(how='all').index[0]
+    c = ladiesNewFixture[ladiesNewFixture == 'Bye'].dropna(how='all',axis=1).columns[0]
+    if c == 'Away Team':
+        c1 = 'Home Team'
+    else:
+        c1 = 'Away Team'
+    
+    byeTeam1 = ladiesNewFixture.loc[r,c1]
+    
+    
+    
+    ladiesNewFixture2 = findBestPairings(ladies_elos,nowFixtured,
+                                         nowRequests,nowHome,byeTeam1)
+    ladiesNewFixture1 = ladiesNewFixture.copy()
+    ladiesNewFixture = pd.concat([ladiesNewFixture1,ladiesNewFixture2])
+    r = ladiesNewFixture1[ladiesNewFixture1=='Bye'].dropna(how='all').index[0]
+    c = ladiesNewFixture1[ladiesNewFixture1=='Bye'].dropna(how='all',axis=1).columns[0]
+    ladiesNewFixture = ladiesNewFixture.reset_index()[['Home Team','Away Team','Game Code']]
+    byeTeam2 = ''
+    for team in ladies_teams:
+        homeFixtured = len(ladiesNewFixture[ladiesNewFixture['Home Team'] == team].values)
+        awayFixtured = len(ladiesNewFixture[ladiesNewFixture['Away Team'] == team].values)
+        totalFixtured = homeFixtured + awayFixtured
         
-        # Determine number of games played at home
-        homeA = len(hometeams[hometeams == teamA])
-        homeB = len(hometeams[hometeams == teamB])
-        
-        # Work out who's played more games
-        if homeB > homeA:
-            hometeam = teamA
-            awayteam = teamB
-        else:
-            hometeam = teamB
-            awayteam = teamA
-        
-        # Write to df
-        # Ensuring that the game hasn't been recorded
-        if (hometeam not in fixtured['Home Team'].unique() and 
-            hometeam not in fixtured['Away Team'].unique() and
-            awayteam not in fixtured['Home Team'].unique() and 
-            awayteam not in fixtured['Away Team'].unique()):
-            
-            fixtured.loc[r,'Home Team'] = hometeam
-            fixtured.loc[r,'Away Team'] = awayteam
-            fixtured.loc[r,'Game Code'] = hometeam + " vs " + awayteam
-            # Increment the row to write to
-            r += 1
-
-
-
-    
-    fname = 'Round %i Ladies Fixtures 2017a.csv' % int(roundno)
-    r_1 = fixtured.copy()
-    #fixtured.to_csv(fname)
-    print "Ladies fixturing complete"
-    # Need to create a new graph and fixture the second round (roundno+1) here
-    #  Need to account for games in the (roundno)th round
-    fixtured_current = ladies_fixtured['Game Code'].append(fixtured['Game Code']).reset_index()
-    byeteam1 = ladies_pairs['Bye']
-    
-    ladies_graph = nx.Graph()
-    # Add nodes from the list of teams (the teams that are in the elos dict)
-    ladies_graph.add_nodes_from(ladies_elos.keys())
-
-    for teamA in ladies_graph.nodes():
-        for teamB in ladies_graph.nodes():
-            if teamA != teamB and byeteam1 not in [teamA,teamB]:
-                
-                # Create the weight for the edge between teamA and teamB, a function of the expected outcome
-                # Larger is better
-                w = getScaledOutcome(teamA,teamB,'Ladies')
-                if 'Bye' not in [teamA,teamB]:
-                    code1 = teamA + ' vs ' + teamB
-                    code2 = teamB + ' vs ' + teamA
-                elif teamA == 'Bye':
-                    code1 = byeteam1 + ' vs ' + teamB
-                    code2 = teamB + ' vs ' + byeteam1
-                elif teamB == 'Bye':
-                    code1 = teamA + ' vs ' + byeteam1
-                    code2 = byeteam1 + ' vs ' + teamA
-                
-                # Increase the weight if the game has been requested
-                if code1 in ladies_requests['Game Code'].unique() or code2 in ladies_requests['Game Code'].unique():
-                    w += 2
-                    
-                # Decrease the weight if the game has occurred
-                if (code1 in ladies_fixtured['Game Code'].unique() or 
-                    code2 in ladies_fixtured['Game Code'].unique() or
-                    code1 in fixtured_current['Game Code'].values or
-                    code2 in fixtured_current['Game Code'].values):
-                    w -= 10
-                    
-                
-                
-                
-                ladies_graph.add_edge(teamA,teamB,weight=w)
-                
-    ladies_pairs = nx.max_weight_matching(ladies_graph)
-    ladies_2_bye = ladies_pairs['Bye']
-     # Determine who is playing at home
-    hometeams = ladies_fixtured['Home Team'].values
-    fixtured = pd.DataFrame(columns = ['Home Team','Away Team','Game Code'])
-
-    r = 0
-    for teamA in ladies_pairs.keys():
-        teamB = ladies_pairs[teamA]
-        
-        # Determine number of games played at home
-        homeA = len(hometeams[hometeams == teamA])
-        homeB = len(hometeams[hometeams == teamB])
-        
-        # Work out who's played more games
-        if homeB > homeA:
-            hometeam = teamA
-            awayteam = teamB
-        else:
-            hometeam = teamB
-            awayteam = teamA
-        
-        # Write to df
-        # Ensuring that the game hasn't been recorded
-        if (hometeam not in fixtured['Home Team'].unique() and 
-            hometeam not in fixtured['Away Team'].unique() and
-            awayteam not in fixtured['Home Team'].unique() and 
-            awayteam not in fixtured['Away Team'].unique()):
-            
-            fixtured.loc[r,'Home Team'] = hometeam
-            fixtured.loc[r,'Away Team'] = awayteam
-            fixtured.loc[r,'Game Code'] = hometeam + " vs " + awayteam
-            # Increment the row to write to
-            r += 1
-
-
-
-    r_2 = fixtured.copy()
-    fname = 'Round %i Ladies Fixtures 2017a.csv' % (int(roundno) + 1)
-    fixtured.to_csv(fname)
-    f_1 = 'Round %i Ladies Fixtures 2017a.csv'% int(roundno)
-    f_2 = 'Round %i Ladies Fixtures 2017a.csv'% (int(roundno)+1)
-    #r_1 = pd.read_csv(f_1)
-    #r_2 = pd.read_csv(f_2)
-    
-    # Combine the two rounds worth of results
-    r_12 = r_1.append(r_2)
-    # Drop the bye games - bye should never be the Away team
-    #     (as their name never appears in the list of home teams)
-    # but it is included for the off chance that it is
-    r_12 = r_12[r_12['Home Team'] != 'Bye']
-    r_12 = r_12[r_12['Away Team'] != 'Bye'].reset_index()
-    r_12 = r_12[['Home Team','Away Team','Game Code']]
-    
-    row = len(r_12)
-    r_12.loc[row,'Home Team'] = ladies_1_bye
-    r_12.loc[row,'Away Team'] = ladies_2_bye
-    r_12.loc[row,'Game Code'] = ladies_1_bye + ' vs ' + ladies_2_bye
-    
-    missing = []
-    for t in ladies_teams[ladies_teams != 'Bye']:
-        h = len(r_12[r_12['Home Team'] == t])
-        a = len(r_12[r_12['Away Team'] == t])
-        tot = h+a
-        
-        if tot != 2:
-            missing.append(t)
-    
-    if len(missing) == 2:
-        row = len(r_12)
-        r_12.loc[row,'Home Team'] = missing[0]
-        r_12.loc[row,'Away Team'] = missing[1]
-        r_12.loc[row,'Game Code'] = missing[0] + ' vs ' + missing[1]
-    
-    rn = '%s-%i' %(roundno,int(roundno)+1)
-    fname  = 'Round %s Ladies Fixtures 2017a.csv' % rn
-    
-    r_12.to_csv(fname)
-    
-    print "Ladies fixturing complete"
-print "Fixturing complete"
-
-elos_fname = "Mixed Elos at round %i.csv" %int(roundno)
-with open(elos_fname,'w') as f:
-    [f.write('{0},{1}\n'.format(key, value)) for key, value in mixed_elos.items()]
-
-
-
-
+        if totalFixtured != 2:
+            byeTeam2 = team
+    ladiesNewFixture.loc[r,c] = byeTeam2
+    gname = ladiesNewFixture.loc[r,'Home Team'] + " vs " + ladiesNewFixture.loc[r,'Away Team']
+    ladiesNewFixture.loc[r,'Game Code'] = gname
+    # Make the filename
+    currentRd = int(roundNumber)
+    nextRd = currentRd + 1
+    rdno = '%i-%i' %(currentRd,nextRd)
+    ladies_fname = "Round %s Ladies Fixtures 2017a.csv" %rdno
+    ladies_elos.pop('Bye',None)
+    ladiesNewFixture.to_csv(ladies_fname)
