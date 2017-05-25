@@ -1,6 +1,15 @@
 import pandas as pd
 import numpy as np
 import networkx as nx
+import sys
+
+
+if len(sys.argv)<2:
+    print "What round are you fixturing?"
+    roundNumber = raw_input()
+else:
+    roundNumber = str(sys.argv[1])
+    print "Fixturing round %s" %roundNumber
 
 def getExpectedOutcome(eloA,eloB):
     # Standard function for finding the expected outcome in an 
@@ -19,8 +28,9 @@ def getScaledOutcome(eloA,eloB):
 def updateElos(initialElos,teamKvalues, results):
     # For each game in results, update the initialElos
     # Return the updated elo dictionary
+    teamElos = initialElos.copy()
     for game in range(len(results)):
-        teamElos = initialElos.copy()
+            
         homeTeam = results.loc[game,'Home Team']
         awayTeam = results.loc[game,'Away Team']
 
@@ -70,7 +80,7 @@ def findBestPairings(elos,fixtured,requested,homeGames,byeTeam):
 
                 # If the teams are not the same and an edge has not been made yet for the two teams
                 if teamA != teamB and not graph.has_edge(teamA,teamB):
-                    w = 100
+                    w = 50
                     if byeTeam is not None:
                         if teamA == 'Bye':
                             teamA = byeTeam
@@ -91,7 +101,7 @@ def findBestPairings(elos,fixtured,requested,homeGames,byeTeam):
                     w += getScaledOutcome(eloA,eloB)
 
                     # Increase the weight if the game has been requested
-                    if code1 in requested['Game Code'].unique() or code2 in requested['Game Code']:
+                    if code1 in requested['Game Code'].unique() or code2 in requested['Game Code'].unique():
                         w += 2
                         indexes = requested[['Game Code','Code 2']][requested[['Game Code','Code 2']]==code1].dropna(how='all').index
                         
@@ -116,7 +126,10 @@ def findBestPairings(elos,fixtured,requested,homeGames,byeTeam):
                         count = len(fixtured[fixtured == code2])
                         w -= 10*count
 
+                    # Make sure the weight is non-negative, as negative weights make the pairing algorithm sad
                     w = max(0,w)
+
+                    
                     graph.add_edge(teamA,teamB,weight=w)
         # Find the optimal pairing for the graph of teams
         optimalPairing = nx.max_weight_matching(graph)
@@ -173,7 +186,8 @@ ladies_fixtured_list = ladies_fixtured['Game Code'].unique()
 mixed_requests = pd.read_excel(data_url,sheetname='Mixed-Requests').dropna(how='all')
 mixed_requests = mixed_requests[mixed_requests['Game Fixtured'] == 0]
 ladies_requests = pd.read_excel(data_url,sheetname='Ladies-Requests').dropna(how='all')
-ladies_requests = ladies_requests[ladies_requests['Game Fixtured'] == 0]
+# Don't only include fixtured games as there will be rematches in the ladies league
+#ladies_requests = ladies_requests[ladies_requests['Game Fixtured'] == 0]
 
 ladies_elos = {team:700 for team in ladies_teams}
 ladies_K = {team:75 for team in ladies_teams}
@@ -188,14 +202,17 @@ mixed_K = {team:mixed_elos_df.loc[team,'K Value'] for team in mixed_elos_df.inde
 mixed_elos = updateElos(mixed_elos,mixed_K,mixed_results)
 ladies_elos = updateElos(ladies_elos,ladies_K,ladies_results)
 
-print "What round are you fixturing?"
-roundNumber = raw_input()
+
 
 if len(mixed_elos.keys()) %2 == 0:
     mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
         mixed_requests,mixed_fixtured['Home Team'].values,None)
     mixed_fname = "Round %s Mixed Fixtures 2017a.csv" %roundNumber
     mixedNewFixture.to_csv(mixed_fname)  
+    elos_fname = "Mixed Elos at round %i.csv" %int(roundNumber)
+    with open(elos_fname,'w') as f:
+        [f.write('{0},{1}\n'.format(key, value)) for key, value in mixed_elos.items()]
+
 elif len(mixed_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     mixed_elos.update({'Bye':0})
     mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
@@ -241,6 +258,13 @@ elif len(mixed_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     mixed_fname = "Round %s Mixed Fixtures 2017a.csv" %rdno
     mixed_elos.pop('Bye',None)
     mixedNewFixture.to_csv(mixed_fname)    
+    elos_fname = "Mixed Elos at round %s.csv" %rdno
+    with open(elos_fname,'w') as f:
+        [f.write('{0},{1}\n'.format(key, value)) for key, value in mixed_elos.items()]
+
+
+
+
     
 ladies_elos.pop('Bye',None)
 
@@ -249,6 +273,12 @@ if len(ladies_elos.keys()) %2 == 0:
         ladies_requests,ladies_fixtured['Home Team'].values,None)
     ladies_fname = "Round %s Ladies Fixtures 2017a.csv" %roundNumber
     ladiesNewFixture.to_csv(ladies_fname)
+
+    elos_fname = "Ladies Elos at round %i.csv" %int(roundNumber)
+    with open(elos_fname,'w') as f:
+        [f.write('{0},{1}\n'.format(key, value)) for key, value in ladies_elos.items()]
+
+
 elif len(ladies_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     ladies_elos.update({'Bye':0})
     ladiesNewFixture = findBestPairings(ladies_elos,ladies_fixtured_list,
@@ -294,3 +324,11 @@ elif len(ladies_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     ladies_fname = "Round %s Ladies Fixtures 2017a.csv" %rdno
     ladies_elos.pop('Bye',None)
     ladiesNewFixture.to_csv(ladies_fname)
+    elos_fname = "Ladies Elos at round %s.csv" %rdno
+    with open(elos_fname,'w') as f:
+        [f.write('{0},{1}\n'.format(key, value)) for key, value in ladies_elos.items()]
+
+
+
+print "Fixturing Complete"
+
