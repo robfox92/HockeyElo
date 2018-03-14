@@ -2,19 +2,26 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 import sys
+import random
+
+#reload(sys)
+#sys.setdefaultencoding('utf8')
 
 
 if len(sys.argv)<2:
-    print "What round are you fixturing?"
-    roundNumber = raw_input()
+    print("What round are you fixturing?")
+    roundNumber = input()
 else:
     roundNumber = str(sys.argv[1])
-    print "Fixturing round %s" %roundNumber
+    print("Fixturing round ",roundNumber)
 
 def getExpectedOutcome(eloA,eloB):
     # Standard function for finding the expected outcome in an 
     #     Elo ranking system
-    out = 1 / (1 + 10 ** -((eloA - eloB) / 400))
+    if eloA == eloB:
+        out = 0.5
+    else:
+        out = 1 / (1 + 10 ** -((eloA - eloB) / 400))
     return out
 
 def getScaledOutcome(eloA,eloB):
@@ -29,38 +36,39 @@ def updateElos(initialElos,teamKvalues, results):
     # For each game in results, update the initialElos
     # Return the updated elo dictionary
     teamElos = initialElos.copy()
-    for game in range(len(results)):
-            
-        homeTeam = results.loc[game,'Home Team']
-        awayTeam = results.loc[game,'Away Team']
+    if len(results) > 0:
+        for game in range(len(results)):
 
-        homeK = teamKvalues[homeTeam]
-        awayK = teamKvalues[awayTeam]
+            homeTeam = results.loc[game,'Home Team']
+            awayTeam = results.loc[game,'Away Team']
 
-        homeScore = results.loc[game,'Home Score']
-        awayScore = results.loc[game,'Away Score']
-        totalScore = float(homeScore + awayScore)       # Cast as float to ensure float division later
-        homeScorePerc = homeScore / totalScore
-        awayScorePerc = awayScore / totalScore
+            homeK = teamKvalues[homeTeam]
+            awayK = teamKvalues[awayTeam]
 
-        homeElo = teamElos[homeTeam]
-        awayElo = teamElos[awayTeam]
+            homeScore = results.loc[game,'Home Score']
+            awayScore = results.loc[game,'Away Score']
+            totalScore = float(homeScore + awayScore)       # Cast as float to ensure float division later
+            homeScorePerc = homeScore / totalScore
+            awayScorePerc = awayScore / totalScore
 
-        homeExpected = getExpectedOutcome(homeElo,awayElo)
-        awayExpected = getExpectedOutcome(awayElo,homeElo)
+            homeElo = teamElos[homeTeam]
+            awayElo = teamElos[awayTeam]
 
-        homeEloNew = homeElo + homeK * (homeScorePerc - homeExpected)
-        awayEloNew = awayElo + awayK * (awayScorePerc - awayExpected)
+            homeExpected = getExpectedOutcome(homeElo,awayElo)
+            awayExpected = getExpectedOutcome(awayElo,homeElo)
 
-        # Ensure that winning teams do not lose elo
-        if homeScore > awayScore:
-            homeEloNew = max(homeElo,homeEloNew)
-        if awayScore > homeScore:
-            awayEloNew = max(awayElo,awayEloNew)
+            homeEloNew = homeElo + homeK * (homeScorePerc - homeExpected)
+            awayEloNew = awayElo + awayK * (awayScorePerc - awayExpected)
 
-        # Update the dictionary with new elos
-        newElos = {homeTeam:homeEloNew, awayTeam:awayEloNew}
-        teamElos.update(newElos)
+            # Ensure that winning teams do not lose elo
+            if homeScore > awayScore:
+                homeEloNew = max(homeElo,homeEloNew)
+            if awayScore > homeScore:
+                awayEloNew = max(awayElo,awayEloNew)
+
+            # Update the dictionary with new elos
+            newElos = {homeTeam:homeEloNew, awayTeam:awayEloNew}
+            teamElos.update(newElos)
 
     # Output the new elos
     return teamElos
@@ -146,7 +154,7 @@ def findBestPairings(elos,fixtured,requested,homeGames,byeTeam):
                 teamA not in newFixture['Away Team'].unique() and
                 teamB not in newFixture['Away Team'].unique()):
 
-                if len(homeGames[homeGames == teamA]):
+                if len(homeGames[homeGames == teamA]) <= len(homeGames[homeGames == teamB]):
                     homeTeam = teamA
                     awayTeam = teamB
                 else:
@@ -160,16 +168,17 @@ def findBestPairings(elos,fixtured,requested,homeGames,byeTeam):
     return newFixture
 
 # Get the data from the google sheet
-teams_url = 'https://docs.google.com/spreadsheets/d/1Oo7fzq3nJP1HxfxTYfSiig0t2Gjt19yA4Agd85CbtHU/export?format=xlsx&id=1Oo7fzq3nJP1HxfxTYfSiig0t2Gjt19yA4Agd85CbtHU'
-mixed_teams_2017a = pd.read_excel(teams_url,sheetname='Mens  Mixed Teams').dropna(how='all').reset_index()
+#teams_url = 'https://docs.google.com/spreadsheets/d/1UNFeLJQsP08k9QJxIfnmGqvf3W-nqxGpeUdlvpFHEYU/export?format=xlsx&id=1UNFeLJQsP08k9QJxIfnmGqvf3W-nqxGpeUdlvpFHEYU'
+data_url = 'https://docs.google.com/spreadsheets/d/10RYpl2cOuze8CfiLjb1NiXsJlbWyrm-k_q33euzIdN8/export?format=xlsx&id=10RYpl2cOuze8CfiLjb1NiXsJlbWyrm-k_q33euzIdN8'
 
-mixed_teams_2017a.columns = ['Old Name', '2017a Name','Team Age','Notes']
-mixed_teams = mixed_teams_2017a['2017a Name'].values
-ladies_teams_2017a = pd.read_excel(teams_url,sheetname = 'Ladies',header=None)
-ladies_teams = ladies_teams_2017a[0].values
+mixed_teams_df = pd.read_excel(data_url,sheetname='Mixed-Starting Elos').dropna(how='all').reset_index()
+mixed_teams = mixed_teams_df['TEAM NAME'].values
+
+ladies_teams_df = pd.read_excel(data_url,sheetname = 'STANLEY LADDER').dropna(how='all').reset_index()
+ladies_teams = ladies_teams_df['Team'].values
 
 
-data_url = 'https://docs.google.com/spreadsheets/d/1OEIBqmZ3y1bCWOkZbdKsJu6ko7OYA3PvBjlQTHrN0mI/export?format=xlsx&id=1OEIBqmZ3y1bCWOkZbdKsJu6ko7OYA3PvBjlQTHrN0mI'
+
 
 mixed_results = pd.read_excel(data_url,sheetname = 'Mixed-Scores').dropna(how='all')
 mixed_results.sort_values(by='Round',inplace=True)
@@ -192,11 +201,9 @@ ladies_requests = pd.read_excel(data_url,sheetname='Ladies-Requests').dropna(how
 ladies_elos = {team:700 for team in ladies_teams}
 ladies_K = {team:75 for team in ladies_teams}
 
-mixed_elos_df = pd.read_excel(data_url,sheetname = 'Mixed-Starting Elos',index='TEAM NAME').dropna(how='all')
-mixed_elos_df.index = mixed_elos_df['TEAM NAME']
-del mixed_elos_df['TEAM NAME']
-mixed_elos = {team:mixed_elos_df.loc[team,'STARTING ELO'] for team in mixed_elos_df.index}
-mixed_K = {team:mixed_elos_df.loc[team,'K Value'] for team in mixed_elos_df.index}
+mixed_teams_df.index = mixed_teams_df['TEAM NAME']
+mixed_elos = {team:mixed_teams_df.loc[team,'STARTING ELO'] for team in mixed_teams_df['TEAM NAME']}
+mixed_K = {team:mixed_teams_df.loc[team,'K Value'] for team in mixed_teams_df['TEAM NAME']}
 
 
 mixed_elos = updateElos(mixed_elos,mixed_K,mixed_results)
@@ -205,16 +212,24 @@ ladies_elos = updateElos(ladies_elos,ladies_K,ladies_results)
 
 
 if len(mixed_elos.keys()) %2 == 0:
+    # If there are an even number of teams, do this normally
     mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
         mixed_requests,mixed_fixtured['Home Team'].values,None)
-    mixed_fname = "Round %s Mixed Fixtures 2017a.csv" %roundNumber
+    mixed_fname = "Round %s Mixed Fixtures 2018a.csv" %roundNumber
     mixedNewFixture.to_csv(mixed_fname)  
     elos_fname = "Mixed Elos at round %i.csv" %int(roundNumber)
     with open(elos_fname,'w') as f:
-        [f.write('{0},{1}\n'.format(key, value)) for key, value in mixed_elos.items()]
+        #[f.write(u'{0},{1}\n'.format(key, value).encode('utf8)')) for key, value in mixed_elos.items()]
+        for k,v in mixed_elos.items():
+            f.write(str(k)+","+str(v)+"\n")
 
 elif len(mixed_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
-    mixed_elos.update({'Bye':0})
+    # If there are an odd number of teams BUT the roundnumber is odd
+
+    # Randomly select the elo for the bye team
+    byeElo = random.choice(mixed_elos.values())
+
+    mixed_elos.update({'Bye':byeElo})
     mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
                                        mixed_requests,mixed_fixtured['Home Team'].values,None)
     
@@ -255,13 +270,14 @@ elif len(mixed_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     currentRd = int(roundNumber)
     nextRd = currentRd + 1
     rdno = '%i-%i' %(currentRd,nextRd)
-    mixed_fname = "Round %s Mixed Fixtures 2017a.csv" %rdno
+    mixed_fname = "Round %s Mixed Fixtures 2018a.csv" %rdno
     mixed_elos.pop('Bye',None)
     mixedNewFixture.to_csv(mixed_fname)    
     elos_fname = "Mixed Elos at round %s.csv" %rdno
     with open(elos_fname,'w') as f:
-        [f.write('{0},{1}\n'.format(key, value)) for key, value in mixed_elos.items()]
-
+#        [f.write(u'{0},{1}\n'.format(key, value).encode('utf8)')) for key, value in mixed_elos.items()]
+        for k,v in mixed_elos.items():
+            f.write(str(k)+","+str(v)+"\n")
 
 
 
@@ -271,16 +287,20 @@ ladies_elos.pop('Bye',None)
 if len(ladies_elos.keys()) %2 == 0:
     ladiesNewFixture = findBestPairings(ladies_elos,ladies_fixtured_list,
         ladies_requests,ladies_fixtured['Home Team'].values,None)
-    ladies_fname = "Round %s Ladies Fixtures 2017a.csv" %roundNumber
+    ladies_fname = "Round %s Ladies Fixtures 2018a.csv" %roundNumber
     ladiesNewFixture.to_csv(ladies_fname)
 
     elos_fname = "Ladies Elos at round %i.csv" %int(roundNumber)
     with open(elos_fname,'w') as f:
-        [f.write('{0},{1}\n'.format(key, value)) for key, value in ladies_elos.items()]
-
+#        [f.write(u'{0},{1}\n'.format(key, value).encode('utf8)')) for key, value in ladies_elos.items()]
+        for k,v in ladies_elos.items():
+            f.write(str(k)+","+str(v)+"\n")
 
 elif len(ladies_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
-    ladies_elos.update({'Bye':0})
+    byeElo = random.choice(list(mixed_elos.values()))
+
+    ladies_elos.update({'Bye':byeElo})
+
     ladiesNewFixture = findBestPairings(ladies_elos,ladies_fixtured_list,
                                        ladies_requests,ladies_fixtured['Home Team'].values,None)
     
@@ -321,14 +341,15 @@ elif len(ladies_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     currentRd = int(roundNumber)
     nextRd = currentRd + 1
     rdno = '%i-%i' %(currentRd,nextRd)
-    ladies_fname = "Round %s Ladies Fixtures 2017a.csv" %rdno
+    ladies_fname = "Round %s Ladies Fixtures 2018a.csv" %rdno
     ladies_elos.pop('Bye',None)
     ladiesNewFixture.to_csv(ladies_fname)
     elos_fname = "Ladies Elos at round %s.csv" %rdno
     with open(elos_fname,'w') as f:
-        [f.write('{0},{1}\n'.format(key, value)) for key, value in ladies_elos.items()]
+#        [f.write(u'{0},{1}\n'.format(key, value).encode('utf8)')) for key, value in ladies_elos.items()]
+        for k,v in ladies_elos.items():
+            f.write(str(k)+","+str(v)+"\n")
 
 
-
-print "Fixturing Complete"
+print("Fixturing Complete")
 
