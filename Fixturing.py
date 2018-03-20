@@ -227,7 +227,7 @@ elif len(mixed_elos.keys())%2 != 0 and int(roundNumber)%2 != 0:
     # If there are an odd number of teams BUT the roundnumber is odd
 
     # Randomly select the elo for the bye team
-    byeElo = random.choice(mixed_elos.values())
+    byeElo = random.choice(list(mixed_elos.values()))
 
     mixed_elos.update({'Bye':byeElo})
     mixedNewFixture = findBestPairings(mixed_elos,mixed_fixtured_list,
